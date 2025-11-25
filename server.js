@@ -9,6 +9,10 @@ const { Client } = require("ssh2");
 const dev = process.env.NODE_ENV !== "production";
 const hostname = "localhost";
 const port = parseInt(process.env.PORT || "3000", 10);
+const projectRefMatch = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").match(
+  /https?:\/\/([^.]+)\./
+);
+const supabaseProjectRef = projectRefMatch ? projectRefMatch[1] : null;
 
 // Initialize Next.js
 const app = next({ dev, hostname, port });
@@ -102,32 +106,55 @@ app.prepare().then(() => {
       return;
     }
 
+    // Extract Supabase access token from cookie (to satisfy RLS)
+    const parseSupabaseAuth = (cookieHeader) => {
+      if (!cookieHeader || !supabaseProjectRef) return null;
+      const cookieName = `sb-${supabaseProjectRef}-auth-token`;
+      const parts = cookieHeader.split(";").map((c) => c.trim());
+      const raw = parts.find((c) => c.startsWith(`${cookieName}=`));
+      if (!raw) return null;
+      try {
+        const value = decodeURIComponent(raw.split("=").slice(1).join("="));
+        return JSON.parse(value);
+      } catch (err) {
+        console.error("Failed to parse Supabase auth cookie:", err);
+        return null;
+      }
+    };
+
+    const supabaseAuth = parseSupabaseAuth(req.headers.cookie);
+    const accessToken = supabaseAuth?.access_token;
+    const userId = supabaseAuth?.user?.id;
+
+    if (!accessToken) {
+      console.error("=== ERROR: Missing Supabase access token in cookies ===");
+      ws.send(
+        JSON.stringify({
+          type: "error",
+          message: "Authentication required. Please log in again.",
+        })
+      );
+      ws.close();
+      return;
+    }
+
     // Get connection details from database
     let connectionConfig;
     try {
       console.log("=== FETCHING CONNECTION FROM DATABASE ===");
       console.log("Calling getDecryptedConnection with ID:", connectionId);
-      connectionConfig = await getDecryptedConnection(connectionId);
+      connectionConfig = await getDecryptedConnection(connectionId, {
+        accessToken,
+        userId,
+      });
       console.log("Database response:", connectionConfig);
 
       if (!connectionConfig) {
         console.log("=== ERROR: Connection not found in database ===");
-        console.log("Checking if connection exists with any user_id...");
-
-        // Check if connection exists with any user_id
-        const { data: anyConnection } = await supabase
-          .from('connections')
-          .select('*')
-          .eq('id', connectionId)
-          .single();
-
-        console.log("Connection with any user_id:", anyConnection);
-
         ws.send(
           JSON.stringify({
             type: "error",
-            message:
-              "Connection not found. Please check your connection settings.",
+            message: "Connection not found. Please check your connection settings.",
           })
         );
         ws.close();

@@ -8,13 +8,31 @@ interface Params {
   }>;
 }
 
+function sanitizeConnection(connection: any) {
+  return {
+    id: connection.id,
+    name: connection.name,
+    host: connection.host,
+    port: connection.port,
+    username: connection.username,
+    authMethod: connection.auth_method,
+    keyType: connection.key_type,
+    keyFingerprint: connection.key_fingerprint,
+    sshKeys: connection.ssh_keys || [],
+    createdAt: connection.created_at,
+    updatedAt: connection.updated_at,
+  };
+}
+
 export async function GET(request: NextRequest, { params }: Params) {
   try {
     const supabase = createClient();
-    
-    // Get authenticated user
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -23,88 +41,68 @@ export async function GET(request: NextRequest, { params }: Params) {
     const connection = await getConnection(user.id, id);
 
     if (!connection) {
-      return NextResponse.json(
-        { error: 'Connection not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
     }
 
-    // Remove sensitive data
-    const sanitized = {
-      id: connection.id,
-      name: connection.name,
-      host: connection.host,
-      port: connection.port,
-      username: connection.username,
-      auth_method: connection.auth_method,
-      key_type: connection.key_type,
-      key_fingerprint: connection.key_fingerprint,
-      ssh_keys: connection.ssh_keys,
-      created_at: connection.created_at,
-      updated_at: connection.updated_at,
-    };
-
-    return NextResponse.json(sanitized);
+    return NextResponse.json(sanitizeConnection(connection));
   } catch (error: any) {
     console.error('Error fetching connection:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch connection' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to fetch connection' }, { status: 500 });
   }
 }
 
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const supabase = createClient();
-    
-    // Get authenticated user
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { id } = await params;
     const body = await request.json();
-    const connection = await updateConnection(user.id, id, body);
 
-    if (!connection) {
-      return NextResponse.json(
-        { error: 'Failed to update connection' },
-        { status: 500 }
-      );
-    }
-
-    // Remove sensitive data
-    const sanitized = {
-      id: connection.id,
-      name: connection.name,
-      host: connection.host,
-      port: connection.port,
-      username: connection.username,
-      auth_method: connection.auth_method,
-      created_at: connection.created_at,
-      updated_at: connection.updated_at,
+    const updates = {
+      name: body.name,
+      host: body.host,
+      port: body.port !== undefined ? Number(body.port) : undefined,
+      username: body.username,
+      password: body.password,
+      auth_method: body.authMethod,
+      private_key: body.privateKey,
+      passphrase: body.passphrase,
+      private_key_content: body.privateKeyContent,
+      key_type: body.keyType,
+      ssh_keys: body.sshKeys,
     };
 
-    return NextResponse.json(sanitized);
+    const connection = await updateConnection(user.id, id, updates);
+
+    if (!connection) {
+      return NextResponse.json({ error: 'Failed to update connection' }, { status: 500 });
+    }
+
+    return NextResponse.json(sanitizeConnection(connection));
   } catch (error: any) {
     console.error('Error updating connection:', error);
-    return NextResponse.json(
-      { error: 'Failed to update connection' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to update connection' }, { status: 500 });
   }
 }
 
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const supabase = createClient();
-    
-    // Get authenticated user
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -113,18 +111,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     const success = await deleteConnection(user.id, id);
 
     if (!success) {
-      return NextResponse.json(
-        { error: 'Failed to delete connection' },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: 'Failed to delete connection' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Error deleting connection:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete connection' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to delete connection' }, { status: 500 });
   }
 }

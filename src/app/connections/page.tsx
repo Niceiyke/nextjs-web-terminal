@@ -74,10 +74,19 @@ export default function ConnectionsPage() {
       const response = await fetch('/api/connections');
       if (response.ok) {
         const data = await response.json();
-        setConnections(data);
+        if (Array.isArray(data)) {
+          setConnections(data);
+        } else {
+          setConnections([]);
+          setError('Unexpected response from server while loading connections.');
+        }
+      } else if (response.status === 401) {
+        setConnections([]);
+        setError('Please log in to manage connections.');
       }
     } catch (err) {
       console.error('Error fetching connections:', err);
+      setError('Failed to load connections.');
     } finally {
       setLoading(false);
     }

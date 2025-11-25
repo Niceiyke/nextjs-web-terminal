@@ -12,19 +12,6 @@ const SUPABASE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-let supabase = null;
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.warn(
-    "Supabase not configured: SUPABASE_URL and keys missing; getDecryptedConnection will return null."
-  );
-} else {
-  try {
-    supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-  } catch (err) {
-    console.error("Failed creating Supabase client:", err);
-    supabase = null;
-  }
-}
 const ALGORITHM = "aes-256-cbc";
 
 function getKey() {
@@ -42,21 +29,47 @@ function decrypt(text) {
   return decrypted;
 }
 
-// (Already initialized above)
+function createSupabaseClient(accessToken) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    console.warn(
+      "Supabase not configured: SUPABASE_URL and keys missing; getDecryptedConnection will return null."
+    );
+    return null;
+  }
+
+  try {
+    const options = accessToken
+      ? {
+          global: {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          },
+        }
+      : undefined;
+
+    return createClient(SUPABASE_URL, SUPABASE_KEY, options);
+  } catch (err) {
+    console.error("Failed creating Supabase client:", err);
+    return null;
+  }
+}
 
 // Query Supabase connections table and return a decrypted, camelCase connection object
-async function getDecryptedConnection(id) {
+async function getDecryptedConnection(id, opts = {}) {
   try {
+    const supabase = createSupabaseClient(opts.accessToken);
     if (!supabase) {
       console.error("Supabase client not available; cannot fetch connection");
       return null;
     }
-    const { data, error } = await supabase
-      .from("connections")
-      .select("*")
-      .eq("id", id)
-      .limit(1)
-      .single();
+
+    let query = supabase.from("connections").select("*").eq("id", id).limit(1);
+    if (opts.userId) {
+      query = query.eq("user_id", opts.userId);
+    }
+
+    const { data, error } = await query.single();
     if (error) {
       console.error("Supabase error fetching connection:", error);
       return null;

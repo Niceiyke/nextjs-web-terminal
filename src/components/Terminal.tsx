@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Terminal as XTerm } from 'xterm';
+import { Terminal as XTerm, type IDisposable } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
 import 'xterm/css/xterm.css';
@@ -18,6 +18,7 @@ export default function Terminal() {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const dataDisposableRef = useRef<IDisposable | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [mounted, setMounted] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -37,21 +38,31 @@ export default function Terminal() {
       
       if (response.ok) {
         const data = await response.json();
-        console.log('Connections fetched successfully:', data);
-        console.log('Number of connections:', data.length);
-        console.log('Connection IDs:', data.map((c: Connection) => c.id));
-        setConnections(data);
-        if (data.length > 0 && !selectedConnection) {
-          console.log('Auto-selecting first connection:', data[0].id);
-          setSelectedConnection(data[0].id);
+        if (Array.isArray(data)) {
+          console.log('Connections fetched successfully:', data);
+          console.log('Number of connections:', data.length);
+          console.log('Connection IDs:', data.map((c: Connection) => c.id));
+          setConnections(data);
+          if (data.length > 0 && !selectedConnection) {
+            console.log('Auto-selecting first connection:', data[0].id);
+            setSelectedConnection(data[0].id);
+          }
+        } else {
+          console.warn('Connections API returned unexpected shape');
+          setConnections([]);
+          setSelectedConnection(null);
         }
       } else {
         console.error('Failed to fetch connections:', response.status, response.statusText);
         const errorText = await response.text();
         console.error('Error response:', errorText);
+        setConnections([]);
+        setSelectedConnection(null);
       }
     } catch (err) {
       console.error('Error fetching connections:', err);
+      setConnections([]);
+      setSelectedConnection(null);
     }
   };
 
@@ -79,6 +90,10 @@ export default function Terminal() {
     if (wsRef.current) {
       console.log('Closing existing WebSocket connection');
       wsRef.current.close();
+    }
+    if (dataDisposableRef.current) {
+      dataDisposableRef.current.dispose();
+      dataDisposableRef.current = null;
     }
 
     // Clear terminal
@@ -148,7 +163,7 @@ export default function Terminal() {
       }
     };
 
-    term.onData(dataHandler);
+    dataDisposableRef.current = term.onData(dataHandler);
   };
 
   useEffect(() => {
@@ -225,6 +240,9 @@ export default function Terminal() {
       window.removeEventListener('resize', handleResize);
       if (wsRef.current) {
         wsRef.current.close();
+      }
+      if (dataDisposableRef.current) {
+        dataDisposableRef.current.dispose();
       }
       term.dispose();
     };
