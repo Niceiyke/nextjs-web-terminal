@@ -5,7 +5,7 @@ export async function POST(request: NextRequest) {
   try {
     const { type = 'rsa', bits = 4096, passphrase } = await request.json();
 
-    // Generate SSH key pair
+    // Generate SSH key pair (use PKCS1 so ssh2 accepts the private key)
     const { publicKey, privateKey } = generateKeyPairSync(type, {
       modulusLength: bits,
       publicKeyEncoding: {
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
         format: 'pem',
       },
       privateKeyEncoding: {
-        type: 'pkcs8',
+        type: 'pkcs1', // ssh2 rejects PKCS8 ("BEGIN PRIVATE KEY"), so emit PKCS1 RSA format
         format: 'pem',
         ...(passphrase && {
           cipher: 'aes-256-cbc',

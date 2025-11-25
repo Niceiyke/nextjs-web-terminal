@@ -5,6 +5,7 @@ const { parse } = require("url");
 const next = require("next");
 const WebSocket = require("ws");
 const { Client } = require("ssh2");
+const crypto = require("crypto");
 
 const dev = process.env.NODE_ENV !== "production";
 const hostname = "localhost";
@@ -21,9 +22,15 @@ const handle = app.getRequestHandler();
 // Import config and database
 let config;
 let getDecryptedConnection;
+let decryptValue;
+const ENCRYPTION_KEY =
+  process.env.ENCRYPTION_KEY || "default-key-change-this-32chars";
+const ALGORITHM = "aes-256-cbc";
 try {
+  const dbModule = require("./src/lib/db.js");
   config = require("./src/lib/config.js").config;
-  getDecryptedConnection = require("./src/lib/db.js").getDecryptedConnection;
+  getDecryptedConnection = dbModule.getDecryptedConnection;
+  decryptValue = dbModule.decrypt;
 } catch (error) {
   console.error("Error loading modules:", error);
   process.exit(1);
@@ -37,6 +44,51 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
   process.exit(1);
 });
+
+// Normalize PKCS8 ("BEGIN PRIVATE KEY") to PKCS1 so ssh2 can parse it
+function normalizePrivateKey(keyContent, passphrase) {
+  try {
+    if (!keyContent || !keyContent.includes("BEGIN PRIVATE KEY")) {
+      return keyContent;
+    }
+    const keyObj = crypto.createPrivateKey({
+      key: keyContent,
+      format: "pem",
+      ...(passphrase ? { passphrase } : {}),
+    });
+    return keyObj.export({ type: "pkcs1", format: "pem" }).toString();
+  } catch (err) {
+    console.warn("Could not normalize private key format:", err.message);
+    return keyContent;
+  }
+}
+
+// Some records may still contain encrypted fields; decrypt when the pattern matches.
+function maybeDecrypt(value) {
+  if (!value || typeof value !== "string") return value;
+  if (!value.includes(":")) return value;
+  try {
+    if (decryptValue) {
+      return decryptValue(value);
+    }
+  } catch (_) {
+    // fall through to fallback decrypt
+  }
+
+  try {
+    // Fallback decrypt using local env key in case module decrypt was initialized without env vars.
+    const [ivHex, dataHex] = value.split(":");
+    const iv = Buffer.from(ivHex, "hex");
+    const key = crypto.scryptSync(ENCRYPTION_KEY, "salt", 32);
+    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+    let decrypted = decipher.update(dataHex, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch (fallbackErr) {
+    console.warn("Could not decrypt value; using raw:", fallbackErr.message);
+    return value;
+  }
+}
 
 app.prepare().then(() => {
   const server = createServer(async (req, res) => {
@@ -193,11 +245,13 @@ app.prepare().then(() => {
     };
 
     // Add authentication based on method
+    const decryptedPassword = maybeDecrypt(connectionConfig.password);
+
     if (
       connectionConfig.authMethod === "password" &&
-      connectionConfig.password
+      decryptedPassword
     ) {
-      sshConfig.password = connectionConfig.password;
+      sshConfig.password = decryptedPassword;
     } else if (connectionConfig.authMethod === "key") {
       // Handle multiple SSH keys with fallback
       if (connectionConfig.sshKeys && connectionConfig.sshKeys.length > 0) {
@@ -217,17 +271,23 @@ app.prepare().then(() => {
 
             if (key.type === "uploaded" && key.content) {
               // Use uploaded key content
-              keyContent = key.content;
+              const decryptedPassphrase = maybeDecrypt(key.passphrase);
+              const decryptedContent = maybeDecrypt(key.content);
+              keyContent = normalizePrivateKey(decryptedContent, decryptedPassphrase);
             } else if (key.type === "file" && key.filePath) {
               // Read key from file
-              keyContent = fs.readFileSync(key.filePath, "utf8");
+              keyContent = normalizePrivateKey(
+                fs.readFileSync(key.filePath, "utf8"),
+                maybeDecrypt(key.passphrase)
+              );
             } else {
               continue; // Skip invalid keys
             }
 
             const keyConfig = { privateKey: keyContent };
-            if (key.passphrase) {
-              keyConfig.passphrase = key.passphrase;
+            const decryptedPass = maybeDecrypt(key.passphrase);
+            if (decryptedPass) {
+              keyConfig.passphrase = decryptedPass;
             }
 
             keys.push(keyConfig);
@@ -259,20 +319,26 @@ app.prepare().then(() => {
         sshConfig._fallbackKeys = keys.slice(1);
       } else if (connectionConfig.privateKeyContent) {
         // Legacy: single uploaded key
-        sshConfig.privateKey = connectionConfig.privateKeyContent;
-        if (connectionConfig.passphrase) {
-          sshConfig.passphrase = connectionConfig.passphrase;
+        const decryptedPass = maybeDecrypt(connectionConfig.passphrase);
+        const decryptedContent = maybeDecrypt(connectionConfig.privateKeyContent);
+        sshConfig.privateKey = normalizePrivateKey(
+          decryptedContent,
+          decryptedPass
+        );
+        if (decryptedPass) {
+          sshConfig.passphrase = decryptedPass;
         }
       } else if (connectionConfig.privateKey) {
         // Legacy: single file path
         const fs = require("fs");
+        const decryptedPass = maybeDecrypt(connectionConfig.passphrase);
         try {
-          sshConfig.privateKey = fs.readFileSync(
-            connectionConfig.privateKey,
-            "utf8"
+          sshConfig.privateKey = normalizePrivateKey(
+            fs.readFileSync(connectionConfig.privateKey, "utf8"),
+            decryptedPass
           );
-          if (connectionConfig.passphrase) {
-            sshConfig.passphrase = connectionConfig.passphrase;
+          if (decryptedPass) {
+            sshConfig.passphrase = decryptedPass;
           }
         } catch (error) {
           console.error("Error reading private key:", error);
