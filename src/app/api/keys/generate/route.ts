@@ -1,0 +1,49 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { generateKeyPairSync } from 'crypto';
+
+export async function POST(request: NextRequest) {
+  try {
+    const { type = 'rsa', bits = 4096, passphrase } = await request.json();
+
+    // Generate SSH key pair
+    const { publicKey, privateKey } = generateKeyPairSync(type, {
+      modulusLength: bits,
+      publicKeyEncoding: {
+        type: 'spki',
+        format: 'pem',
+      },
+      privateKeyEncoding: {
+        type: 'pkcs8',
+        format: 'pem',
+        ...(passphrase && {
+          cipher: 'aes-256-cbc',
+          passphrase: passphrase,
+        }),
+      },
+    });
+
+    // Convert public key to OpenSSH format (simplified)
+    const publicKeySSH = publicKey
+      .replace('-----BEGIN PUBLIC KEY-----', '')
+      .replace('-----END PUBLIC KEY-----', '')
+      .replace(/\s/g, '');
+
+    // Calculate fingerprint
+    const crypto = require('crypto');
+    const hash = crypto.createHash('sha256').update(publicKey).digest('base64');
+    const fingerprint = `SHA256:${hash}`;
+
+    return NextResponse.json({
+      publicKey,
+      privateKey,
+      publicKeySSH: `ssh-rsa ${publicKeySSH}`,
+      fingerprint,
+    });
+  } catch (error: any) {
+    console.error('Key generation error:', error);
+    return NextResponse.json(
+      { error: 'Failed to generate SSH key pair: ' + error.message },
+      { status: 500 }
+    );
+  }
+}
