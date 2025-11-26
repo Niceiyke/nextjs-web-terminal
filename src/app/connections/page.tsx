@@ -168,7 +168,55 @@ export default function ConnectionsPage() {
     reader.readAsText(file);
   };
 
+  // Attempt to push the freshly generated public key to the target server's authorized_keys
+  const autoInstallKeyOnServer = async (publicKeySSH: string) => {
+    if (!formData.host || !formData.username) {
+      setError('Host and username are required to auto-install the SSH key.');
+      return;
+    }
+
+    // Installing a brand-new key requires a working auth method (typically a password).
+    if (!formData.password) {
+      setError('Enter the server password so we can add the generated public key to ~/.ssh/authorized_keys.');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/keys/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          host: formData.host,
+          port: formData.port,
+          username: formData.username,
+          publicKey: publicKeySSH,
+          authMethod: 'password',
+          password: formData.password,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error || 'Failed to add the SSH key to the server.');
+        return;
+      }
+
+      const statusMsg = data.message || 'SSH key added to the server.';
+      if (data.verified) {
+        setSuccess(`${statusMsg} Verified in authorized_keys.`);
+      } else {
+        setSuccess(`${statusMsg} Verification inconclusive—please confirm on the server.`);
+      }
+    } catch (installErr) {
+      console.error('Error installing SSH key on server:', installErr);
+      setError('Unable to add the SSH key to the server automatically.');
+    }
+  };
+
   const generateSSHKey = async () => {
+    setError('');
+    setSuccess('');
     setKeyGenLoading(true);
     try {
       const response = await fetch('/api/keys/generate', {
@@ -199,6 +247,8 @@ export default function ConnectionsPage() {
           ...formData,
           sshKeys: [...formData.sshKeys, newKey],
         });
+
+        await autoInstallKeyOnServer(data.publicKeySSH || data.publicKey);
       } else {
         const data = await response.json();
         setError(data.error || 'Failed to generate keys');
@@ -476,6 +526,22 @@ export default function ConnectionsPage() {
                       onChange={(e) => setFormData({ ...formData, passphrase: e.target.value })}
                       className="w-full px-4 py-2 bg-terminal-bg-tertiary border border-terminal-border rounded-lg text-terminal-text-primary focus:outline-none focus:ring-2 focus:ring-terminal-accent-blue"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-terminal-text-secondary mb-2">
+                      Server Password (used to install generated key)
+                    </label>
+                    <input
+                      type="password"
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      className="w-full px-4 py-2 bg-terminal-bg-tertiary border border-terminal-border rounded-lg text-terminal-text-primary focus:outline-none focus:ring-2 focus:ring-terminal-accent-blue"
+                      placeholder="Password for the SSH user (optional)"
+                    />
+                    <p className="mt-1 text-xs text-terminal-text-secondary">
+                      We'll use this to add the generated public key to ~/.ssh/authorized_keys.
+                    </p>
                   </div>
 
                   {/* SSH Key Actions */}

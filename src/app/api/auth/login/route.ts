@@ -44,7 +44,6 @@ export async function POST(request: NextRequest) {
         }
       } catch (supabaseError) {
         // Supabase authentication failed, but continue to check local auth
-        console.log('Supabase auth failed, checking local auth');
       }
     }
 

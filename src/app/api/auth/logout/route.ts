@@ -33,7 +33,6 @@ export async function POST(request: NextRequest) {
       const supabase = createClient();
       await supabase.auth.signOut();
     } catch (supabaseError) {
-      console.log('Supabase logout failed:', supabaseError);
     }
 
     return response;
