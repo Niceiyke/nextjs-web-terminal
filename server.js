@@ -1,4 +1,4 @@
-require('dotenv').config({ path: '.env.local' });
+require("dotenv").config({ path: ".env.local" });
 
 const { createServer } = require("http");
 const { parse } = require("url");
@@ -36,12 +36,12 @@ try {
   process.exit(1);
 }
 
-process.on('uncaughtException', (err) => {
-  if (err.message && err.message.includes('Invalid WebSocket frame')) {
-    console.error('WebSocket frame error (handled):', err.message);
+process.on("uncaughtException", (err) => {
+  if (err.message && err.message.includes("Invalid WebSocket frame")) {
+    console.error("WebSocket frame error (handled):", err.message);
     return;
   }
-  console.error('Uncaught Exception:', err);
+  console.error("Uncaught Exception:", err);
   process.exit(1);
 });
 
@@ -110,43 +110,42 @@ app.prepare().then(() => {
   });
 
   // Handle WebSocket upgrade requests
-  server.on('upgrade', (req, socket, head) => {
+  server.on("upgrade", (req, socket, head) => {
     try {
       const url = new URL(req.url, `http://${req.headers.host}`);
-      console.log('WebSocket upgrade request for path:', url.pathname);
-      
-      if (url.pathname === '/ws') {
-        console.log('Handling WebSocket upgrade for /ws');
+
+      if (url.pathname === "/ws") {
         wss.handleUpgrade(req, socket, head, (ws) => {
-          wss.emit('connection', ws, req);
+          wss.emit("connection", ws, req);
         });
       } else {
-        console.log('Destroying socket for non-/ws path:', url.pathname);
         socket.destroy();
       }
     } catch (err) {
-      console.error('WebSocket upgrade error:', err);
+      console.error("WebSocket upgrade error:", err);
       try {
         socket.destroy();
       } catch (destroyErr) {
-        console.error('Error destroying socket:', destroyErr);
+        console.error("Error destroying socket:", destroyErr);
       }
     }
   });
 
   wss.on("connection", async (ws, req) => {
-    console.log("=== WEB SOCKET CONNECTION ESTABLISHED ===");
-    console.log("Request URL:", req.url);
-    console.log("Headers:", req.headers);
+    // Add close listener early to catch any unexpected closes
+    ws.on("close", () => {
+    });
 
-    // Parse connection ID from query params
+    ws.on("error", (error) => {
+      console.error("=== WebSocket error ===", error);
+    });
+
+    // Parse connection ID and auth method from query params
     const urlParams = new URL(req.url, `http://${req.headers.host}`);
     const connectionId = urlParams.searchParams.get("connectionId");
-    console.log("Connection ID received:", connectionId);
-    console.log("Type of connectionId:", typeof connectionId);
+    const requestedAuthMethod = urlParams.searchParams.get("authMethod");
 
     if (!connectionId) {
-      console.log("=== ERROR: No connection ID provided ===");
       ws.send(
         JSON.stringify({
           type: "error",
@@ -193,20 +192,17 @@ app.prepare().then(() => {
     // Get connection details from database
     let connectionConfig;
     try {
-      console.log("=== FETCHING CONNECTION FROM DATABASE ===");
-      console.log("Calling getDecryptedConnection with ID:", connectionId);
       connectionConfig = await getDecryptedConnection(connectionId, {
         accessToken,
         userId,
       });
-      console.log("Database response:", connectionConfig);
 
       if (!connectionConfig) {
-        console.log("=== ERROR: Connection not found in database ===");
         ws.send(
           JSON.stringify({
             type: "error",
-            message: "Connection not found. Please check your connection settings.",
+            message:
+              "Connection not found. Please check your connection settings.",
           })
         );
         ws.close();
@@ -226,15 +222,6 @@ app.prepare().then(() => {
       return;
     }
 
-    console.log(
-      `=== SSH CONNECTION ATTEMPT ===`
-    );
-    console.log(
-      `Connecting to: ${connectionConfig.username}@${connectionConfig.host}:${connectionConfig.port}`
-    );
-    console.log("Auth method:", connectionConfig.authMethod);
-    console.log("Has password:", !!connectionConfig.password);
-    console.log("Has SSH keys:", connectionConfig.sshKeys ? connectionConfig.sshKeys.length : 0);
 
     // Build SSH config
     const sshConfig = {
@@ -244,15 +231,23 @@ app.prepare().then(() => {
       readyTimeout: 20000,
     };
 
-    // Add authentication based on method
+    // Add authentication based on requested method or connection's configured method
     const decryptedPassword = maybeDecrypt(connectionConfig.password);
 
-    if (
-      connectionConfig.authMethod === "password" &&
-      decryptedPassword
-    ) {
+    // Determine which auth method to use
+    // If client specifies a method and it's available, use that; otherwise use connection's method
+    const shouldUsePassword =
+      requestedAuthMethod === "password" ||
+      (requestedAuthMethod !== "key" &&
+        connectionConfig.authMethod === "password");
+    const shouldUseKey =
+      requestedAuthMethod === "key" ||
+      (requestedAuthMethod !== "password" &&
+        connectionConfig.authMethod === "key");
+
+    if (shouldUsePassword && decryptedPassword) {
       sshConfig.password = decryptedPassword;
-    } else if (connectionConfig.authMethod === "key") {
+    } else if (shouldUseKey) {
       // Handle multiple SSH keys with fallback
       if (connectionConfig.sshKeys && connectionConfig.sshKeys.length > 0) {
         const fs = require("fs");
@@ -273,7 +268,17 @@ app.prepare().then(() => {
               // Use uploaded key content
               const decryptedPassphrase = maybeDecrypt(key.passphrase);
               const decryptedContent = maybeDecrypt(key.content);
-              keyContent = normalizePrivateKey(decryptedContent, decryptedPassphrase);
+
+              // Ensure the key has proper formatting
+              let normalizedContent = decryptedContent.trim();
+              if (!normalizedContent.endsWith("\n")) {
+                normalizedContent += "\n";
+              }
+
+              keyContent = normalizePrivateKey(
+                normalizedContent,
+                decryptedPassphrase
+              );
             } else if (key.type === "file" && key.filePath) {
               // Read key from file
               keyContent = normalizePrivateKey(
@@ -293,6 +298,7 @@ app.prepare().then(() => {
             keys.push(keyConfig);
           } catch (error) {
             console.error(`Error loading SSH key ${key.id}:`, error.message);
+            console.error("Error stack:", error.stack);
             // Continue to next key
           }
         }
@@ -314,13 +320,18 @@ app.prepare().then(() => {
           sshConfig.passphrase = keys[0].passphrase;
         }
 
+        // Log the key as buffer to check for encoding issues
+        const keyBuffer = Buffer.from(sshConfig.privateKey);
+
         // Store additional keys for fallback
         sshConfig.tryKeyboard = true;
         sshConfig._fallbackKeys = keys.slice(1);
       } else if (connectionConfig.privateKeyContent) {
         // Legacy: single uploaded key
         const decryptedPass = maybeDecrypt(connectionConfig.passphrase);
-        const decryptedContent = maybeDecrypt(connectionConfig.privateKeyContent);
+        const decryptedContent = maybeDecrypt(
+          connectionConfig.privateKeyContent
+        );
         sshConfig.privateKey = normalizePrivateKey(
           decryptedContent,
           decryptedPass
@@ -387,9 +398,6 @@ app.prepare().then(() => {
           config._fallbackKeys.length > 0
         ) {
           keyFallbackAttempted = true;
-          console.log(
-            `Trying fallback key (${config._fallbackKeys.length} remaining)...`
-          );
 
           const nextKey = config._fallbackKeys[0];
           const newConfig = {
@@ -403,6 +411,7 @@ app.prepare().then(() => {
           return;
         }
 
+        // No more fallback keys - report error
         ws.send(
           JSON.stringify({
             type: "error",
@@ -413,23 +422,31 @@ app.prepare().then(() => {
       });
 
       sshAttempt.on("ready", () => {
-        console.log("SSH connection established");
-        ws.send(
-          JSON.stringify({
-            type: "status",
-            message: `Connected to ${connectionConfig.name}`,
-          })
-        );
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "status",
+              message: `Connected to ${connectionConfig.name}`,
+            })
+          );
+        } catch (sendErr) {
+          console.error("Error sending status message:", sendErr);
+        }
 
         // Start shell session
         sshAttempt.shell({ term: "xterm-256color" }, (err, stream) => {
           if (err) {
-            ws.send(
-              JSON.stringify({
-                type: "error",
-                message: "Failed to start shell: " + err.message,
-              })
-            );
+            console.error("Failed to start shell:", err);
+            try {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message: "Failed to start shell: " + err.message,
+                })
+              );
+            } catch (sendErr) {
+              console.error("Error sending error message:", sendErr);
+            }
             return ws.close();
           }
 
@@ -446,7 +463,6 @@ app.prepare().then(() => {
 
           // Handle stream close
           stream.on("close", () => {
-            console.log("SSH stream closed");
             sshAttempt.end();
             ws.close();
           });
@@ -468,14 +484,12 @@ app.prepare().then(() => {
 
           // Handle WebSocket close
           ws.on("close", () => {
-            console.log("WebSocket closed");
             sshAttempt.end();
           });
         });
       });
 
       sshAttempt.on("close", () => {
-        console.log("SSH connection closed");
         ws.close();
       });
 
@@ -488,17 +502,5 @@ app.prepare().then(() => {
 
   server.listen(port, (err) => {
     if (err) throw err;
-    console.log("=".repeat(60));
-    console.log("Next.js Web Terminal Server Running");
-    console.log("=".repeat(60));
-    console.log(`> Local:            http://${hostname}:${port}`);
-    console.log(
-      `> Web Auth:         ${config.webAuth.enabled ? "Enabled" : "Disabled"}`
-    );
-    console.log(`> Environment:      ${dev ? "Development" : "Production"}`);
-    console.log(`> Database:         SQLite (data/connections.db)`);
-    console.log("=".repeat(60));
-    console.log("Connection management available at /connections");
-    console.log("=".repeat(60));
   });
 });
