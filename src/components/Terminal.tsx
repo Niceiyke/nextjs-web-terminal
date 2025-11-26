@@ -263,6 +263,10 @@ export default function Terminal() {
     if (connection.sshKeys && connection.sshKeys.length > 0) {
       availableAuthMethods.push("key");
     }
+    // Also consider legacy key fields or configured auth method
+    if (connection.authMethod === "key" && !availableAuthMethods.includes("key")) {
+      availableAuthMethods.push("key");
+    }
 
     // Determine auth method to use: selectedAuthMethod if set, otherwise default to SSH if available
     let authMethodToUse: "password" | "key";
@@ -416,6 +420,10 @@ export default function Terminal() {
                 availableMethods.push("password");
               }
               if (conn.sshKeys && conn.sshKeys.length > 0) {
+                availableMethods.push("key");
+              }
+              // Also consider legacy key fields or configured auth method
+              if (conn.authMethod === "key" && !availableMethods.includes("key")) {
                 availableMethods.push("key");
               }
 
