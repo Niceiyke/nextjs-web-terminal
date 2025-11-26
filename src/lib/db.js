@@ -20,13 +20,42 @@ function getKey() {
 
 function decrypt(text) {
   if (!text) return null;
+  
+  // Validate input format
+  if (typeof text !== 'string' || !text.includes(':')) {
+    console.error('Invalid encrypted text format:', text);
+    return null;
+  }
+  
   const parts = text.split(":");
-  const iv = Buffer.from(parts[0], "hex");
-  const encryptedText = parts[1];
-  const decipher = createDecipheriv(ALGORITHM, getKey(), iv);
-  let decrypted = decipher.update(encryptedText, "hex", "utf8");
-  decrypted += decipher.final("utf8");
-  return decrypted;
+  if (parts.length !== 2) {
+    console.error('Invalid encrypted text parts:', parts);
+    return null;
+  }
+  
+  try {
+    const iv = Buffer.from(parts[0], "hex");
+    const encryptedText = parts[1];
+    
+    // Validate IV and encrypted text
+    if (iv.length !== 16) {
+      console.error('Invalid IV length:', iv.length, 'Expected: 16');
+      return null;
+    }
+    
+    if (!encryptedText || encryptedText.length === 0) {
+      console.error('Empty encrypted text');
+      return null;
+    }
+    
+    const decipher = createDecipheriv(ALGORITHM, getKey(), iv);
+    let decrypted = decipher.update(encryptedText, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch (error) {
+    console.error('Decryption error for text:', text, 'Error:', error.message);
+    return null;
+  }
 }
 
 function createSupabaseClient(accessToken) {
@@ -84,11 +113,42 @@ async function getDecryptedConnection(id, opts = {}) {
       Array.isArray(conn.ssh_keys) &&
       conn.ssh_keys.length > 0
     ) {
-      decryptedKeys = conn.ssh_keys.map((key) => ({
-        ...key,
-        content: key.content ? decrypt(key.content) : undefined,
-        passphrase: key.passphrase ? decrypt(key.passphrase) : undefined,
-      }));
+      try {
+        decryptedKeys = conn.ssh_keys.map((key, index) => ({
+          ...key,
+          content: key.content ? decrypt(key.content) : undefined,
+          passphrase: key.passphrase ? decrypt(key.passphrase) : undefined,
+        }));
+      } catch (error) {
+        console.error(`Error decrypting SSH keys for connection ${id}:`, error);
+        decryptedKeys = conn.ssh_keys;
+      }
+    }
+
+    // Safely decrypt fields with individual error handling
+    let decryptedPassword, decryptedPassphrase, decryptedPrivateKeyContent;
+    
+    try {
+      decryptedPassword = conn.password ? decrypt(conn.password) : undefined;
+    } catch (error) {
+      console.error(`Error decrypting password for connection ${id}:`, error);
+      decryptedPassword = undefined;
+    }
+    
+    try {
+      decryptedPassphrase = conn.passphrase ? decrypt(conn.passphrase) : undefined;
+    } catch (error) {
+      console.error(`Error decrypting passphrase for connection ${id}:`, error);
+      decryptedPassphrase = undefined;
+    }
+    
+    try {
+      decryptedPrivateKeyContent = conn.private_key_content
+        ? decrypt(conn.private_key_content)
+        : undefined;
+    } catch (error) {
+      console.error(`Error decrypting private key content for connection ${id}:`, error);
+      decryptedPrivateKeyContent = undefined;
     }
 
     return {
@@ -97,13 +157,11 @@ async function getDecryptedConnection(id, opts = {}) {
       host: conn.host,
       port: conn.port,
       username: conn.username,
-      password: conn.password ? decrypt(conn.password) : undefined,
+      password: decryptedPassword,
       authMethod: conn.auth_method || conn.authMethod,
       privateKey: conn.private_key || undefined,
-      passphrase: conn.passphrase ? decrypt(conn.passphrase) : undefined,
-      privateKeyContent: conn.private_key_content
-        ? decrypt(conn.private_key_content)
-        : undefined,
+      passphrase: decryptedPassphrase,
+      privateKeyContent: decryptedPrivateKeyContent,
       keyType: conn.key_type || conn.keyType,
       sshKeys: decryptedKeys,
     };

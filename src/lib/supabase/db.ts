@@ -122,7 +122,6 @@ export async function createConnection(
       private_key_content: encryptedKeyContent,
       key_type: input.key_type || "file",
       ssh_keys: sshKeysJson,
-      has_password: !!input.password, // Explicitly set hasPassword based on the presence of a password
     })
     .select()
     .single();

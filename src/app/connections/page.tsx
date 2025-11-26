@@ -540,7 +540,7 @@ export default function ConnectionsPage() {
                       placeholder="Password for the SSH user (optional)"
                     />
                     <p className="mt-1 text-xs text-terminal-text-secondary">
-                      We'll use this to add the generated public key to ~/.ssh/authorized_keys.
+                      We&apos;ll use this to add the generated public key to ~/.ssh/authorized_keys.
                     </p>
                   </div>
 
@@ -692,7 +692,7 @@ export default function ConnectionsPage() {
 
                     <div>
                       <label className="block text-sm font-medium text-terminal-text-secondary mb-2">
-                        Public Key (add this to your server's authorized_keys)
+                        Public Key (add this to your server&apos;s authorized_keys)
                       </label>
                       <textarea
                         value={generatedKeys.publicKey}

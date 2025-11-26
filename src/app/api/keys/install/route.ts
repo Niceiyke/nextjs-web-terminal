@@ -116,7 +116,7 @@ async function addKeyToServer(config: ConnectConfig, publicKey: string): Promise
 
           let stderr = '';
 
-          stream.on('close', (code) => {
+          stream.on('close', (code: number) => {
             ssh.end();
             if (code === 0) {
               resolve();
@@ -186,7 +186,7 @@ export async function POST(request: NextRequest) {
               return reject(err);
             }
 
-            stream.on('close', (code) => {
+            stream.on('close', (code: number) => {
               verified = code === 0;
               ssh.end();
               resolve();

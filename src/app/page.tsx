@@ -1,10 +1,10 @@
 import { redirect } from 'next/navigation';
-import { getSession } from '@/lib/session';
-import { config } from '@/lib/config';
+import { getSession } from '../lib/session';
+import { config } from '../lib/config';
 import dynamic from 'next/dynamic';
-import Header from '@/components/Header';
+import Header from '../components/Header';
 
-const Terminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
+const Terminal = dynamic(() => import('../components/Terminal'), { ssr: false });
 
 export default async function HomePage() {
   const session = await getSession();

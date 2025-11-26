@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal as XTerm, type IDisposable } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
@@ -63,12 +63,7 @@ export default function Terminal() {
     "password" | "key" | null
   >(null);
 
-  useEffect(() => {
-    setMounted(true);
-    fetchConnections();
-  }, []);
-
-  const fetchConnections = async () => {
+  const fetchConnections = useCallback(async () => {
     try {
       const response = await fetch("/api/connections");
 
@@ -100,7 +95,14 @@ export default function Terminal() {
       setConnections([]);
       setSelectedConnection(null);
     }
-  };
+  }, [selectedConnection]);
+
+  useEffect(() => {
+    setMounted(true);
+    fetchConnections();
+  }, [fetchConnections]);
+
+
 
   const updateTabMeta = (tabId: string, updates: Partial<TerminalTab>) => {
     setTabs((prev) =>
@@ -367,7 +369,9 @@ export default function Terminal() {
 
   useEffect(() => {
     return () => {
-      Object.values(tabRuntimesRef.current).forEach((runtime) => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const currentRuntimes = tabRuntimesRef.current;
+      Object.values(currentRuntimes).forEach((runtime) => {
         runtime.ws?.close();
         runtime.dataDisposable?.dispose();
         runtime.term.dispose();
@@ -495,23 +499,21 @@ export default function Terminal() {
           {tabs.map((tab) => (
             <div
               key={tab.id}
-              className={`flex items-center gap-2 px-3 py-1 rounded-md cursor-pointer transition-colors ${
-                activeTabId === tab.id
-                  ? "bg-terminal-bg-tertiary text-terminal-text-primary"
-                  : "bg-terminal-bg-secondary text-terminal-text-secondary hover:text-terminal-text-primary"
-              }`}
+              className={`flex items-center gap-2 px-3 py-1 rounded-md cursor-pointer transition-colors ${activeTabId === tab.id
+                ? "bg-terminal-bg-tertiary text-terminal-text-primary"
+                : "bg-terminal-bg-secondary text-terminal-text-secondary hover:text-terminal-text-primary"
+                }`}
               onClick={() => setActiveTabId(tab.id)}
             >
               <span
-                className={`w-2 h-2 rounded-full ${
-                  tab.status === "connected"
-                    ? "bg-green-500"
-                    : tab.status === "connecting"
+                className={`w-2 h-2 rounded-full ${tab.status === "connected"
+                  ? "bg-green-500"
+                  : tab.status === "connecting"
                     ? "bg-yellow-500"
                     : tab.status === "error"
-                    ? "bg-red-500"
-                    : "bg-terminal-text-secondary"
-                }`}
+                      ? "bg-red-500"
+                      : "bg-terminal-text-secondary"
+                  }`}
               />
               <div className="flex flex-col leading-tight">
                 <span className="text-sm font-semibold">
@@ -569,9 +571,8 @@ export default function Terminal() {
                   containerRefs.current[tab.id] = el;
                   initializeTerminalForTab(tab.id, el);
                 }}
-                className={`absolute inset-0 p-2 ${
-                  activeTabId === tab.id ? "block" : "hidden"
-                }`}
+                className={`absolute inset-0 p-2 ${activeTabId === tab.id ? "block" : "hidden"
+                  }`}
               />
             ))
           )}
